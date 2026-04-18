@@ -131,9 +131,9 @@ func (b *BaseChannel) GetStreamClient() *http.Client {
 	return b.StreamClient
 }
 
-// ApplyModelRedirect applies model redirection based on the group's redirect rules.
-func (b *BaseChannel) ApplyModelRedirect(req *http.Request, bodyBytes []byte, group *models.Group) ([]byte, error) {
-	if len(group.ModelRedirectMap) == 0 || len(bodyBytes) == 0 {
+// ApplyModelRedirect applies model redirection based on the group's redirect rules and key-based overrides.
+func (b *BaseChannel) ApplyModelRedirect(req *http.Request, bodyBytes []byte, group *models.Group, apiKey *models.APIKey) ([]byte, error) {
+	if len(bodyBytes) == 0 {
 		return bodyBytes, nil
 	}
 
@@ -152,26 +152,36 @@ func (b *BaseChannel) ApplyModelRedirect(req *http.Request, bodyBytes []byte, gr
 		return bodyBytes, nil
 	}
 
-	// Direct match without any prefix processing
-	if targetModel, found := group.ModelRedirectMap[model]; found {
-		requestData["model"] = targetModel
+	// Group redirect (lower priority)
+	if len(group.ModelRedirectMap) > 0 {
+		if targetModel, found := group.ModelRedirectMap[model]; found {
+			requestData["model"] = targetModel
 
-		// Log the redirection for audit
-		logrus.WithFields(logrus.Fields{
-			"group":          group.Name,
-			"original_model": model,
-			"target_model":   targetModel,
-			"channel":        "json_body",
-		}).Debug("Model redirected")
-
-		return json.Marshal(requestData)
+			logrus.WithFields(logrus.Fields{
+				"group":          group.Name,
+				"original_model": model,
+				"target_model":   targetModel,
+				"channel":        "json_body",
+			}).Debug("Model redirected")
+		} else if group.ModelRedirectStrict {
+			return nil, fmt.Errorf("model '%s' is not configured in redirect rules", model)
+		}
 	}
 
-	if group.ModelRedirectStrict {
-		return nil, fmt.Errorf("model '%s' is not configured in redirect rules", model)
+	// Key-based model override (highest priority) - overrides group redirect
+	if apiKey != nil {
+		if overrideModel := utils.GetOverrideModel(apiKey.KeyValue); overrideModel != "" {
+			logrus.WithFields(logrus.Fields{
+				"group":          group.Name,
+				"original_model": requestData["model"],
+				"target_model":   overrideModel,
+				"channel":        "json_body",
+			}).Debug("Key model override applied")
+			requestData["model"] = overrideModel
+		}
 	}
 
-	return bodyBytes, nil
+	return json.Marshal(requestData)
 }
 
 // TransformModelList transforms the model list response based on redirect rules.

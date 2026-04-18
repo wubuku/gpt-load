@@ -161,20 +161,16 @@ func (ch *GeminiChannel) ValidateKey(ctx context.Context, apiKey *models.APIKey,
 }
 
 // ApplyModelRedirect overrides the default implementation for Gemini channel.
-func (ch *GeminiChannel) ApplyModelRedirect(req *http.Request, bodyBytes []byte, group *models.Group) ([]byte, error) {
-	if len(group.ModelRedirectMap) == 0 {
-		return bodyBytes, nil
-	}
-
+func (ch *GeminiChannel) ApplyModelRedirect(req *http.Request, bodyBytes []byte, group *models.Group, apiKey *models.APIKey) ([]byte, error) {
 	if strings.Contains(req.URL.Path, "v1beta/openai") {
-		return ch.BaseChannel.ApplyModelRedirect(req, bodyBytes, group)
+		return ch.BaseChannel.ApplyModelRedirect(req, bodyBytes, group, apiKey)
 	}
 
-	return ch.applyNativeFormatRedirect(req, bodyBytes, group)
+	return ch.applyNativeFormatRedirect(req, bodyBytes, group, apiKey)
 }
 
 // applyNativeFormatRedirect handles model redirection for Gemini native format.
-func (ch *GeminiChannel) applyNativeFormatRedirect(req *http.Request, bodyBytes []byte, group *models.Group) ([]byte, error) {
+func (ch *GeminiChannel) applyNativeFormatRedirect(req *http.Request, bodyBytes []byte, group *models.Group, apiKey *models.APIKey) ([]byte, error) {
 	path := req.URL.Path
 	parts := strings.Split(path, "/")
 
@@ -183,6 +179,29 @@ func (ch *GeminiChannel) applyNativeFormatRedirect(req *http.Request, bodyBytes 
 			modelPart := parts[i+1]
 			originalModel := strings.Split(modelPart, ":")[0]
 
+			// Key-based model override (highest priority) - modifies URL path
+			if apiKey != nil {
+				if overrideModel := utils.GetOverrideModel(apiKey.KeyValue); overrideModel != "" {
+					suffix := ""
+					if colonIndex := strings.Index(modelPart, ":"); colonIndex != -1 {
+						suffix = modelPart[colonIndex:]
+					}
+					parts[i+1] = overrideModel + suffix
+					req.URL.Path = strings.Join(parts, "/")
+
+					logrus.WithFields(logrus.Fields{
+						"group":          group.Name,
+						"original_model": originalModel,
+						"target_model":   overrideModel,
+						"channel":        "gemini_native",
+						"override":       true,
+					}).Debug("Key model override applied")
+
+					return bodyBytes, nil
+				}
+			}
+
+			// Group redirect (lower priority)
 			if targetModel, found := group.ModelRedirectMap[originalModel]; found {
 				suffix := ""
 				if colonIndex := strings.Index(modelPart, ":"); colonIndex != -1 {
