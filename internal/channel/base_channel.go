@@ -173,7 +173,7 @@ func (b *BaseChannel) ApplyModelRedirect(req *http.Request, bodyBytes []byte, gr
 		if overrideModel := utils.GetOverrideModel(apiKey.KeyValue); overrideModel != "" {
 			logrus.WithFields(logrus.Fields{
 				"group":          group.Name,
-				"original_model": requestData["model"],
+				"original_model": model,
 				"target_model":   overrideModel,
 				"channel":        "json_body",
 			}).Debug("Key model override applied")

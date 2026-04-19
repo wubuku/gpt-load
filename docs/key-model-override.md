@@ -34,8 +34,8 @@ Create a `key-model-override.json` file in the same directory as the `gpt-load` 
 When a request comes with a JSON body containing a `model` field:
 
 1. Request body is unmarshaled once
-2. Key override is checked first (highest priority)
-3. Group redirect is checked second (if no key override matched)
+2. Group redirect is checked first; if matched, modifies model
+3. Key override is checked second; if matched, overrides the model (wins when both match)
 4. Result is marshaled once and returned
 
 ### Gemini Native Format (URL path)
@@ -43,8 +43,8 @@ When a request comes with a JSON body containing a `model` field:
 When a request comes with a Gemini native URL path like `/v1beta/models/gemini-pro:generateContent`:
 
 1. URL path is parsed to extract the model name
-2. Key override is checked first - modifies `req.URL.Path` directly
-3. Group redirect is checked second (if no key override matched)
+2. Key override is checked first; if matched, modifies `req.URL.Path` directly (wins when both match)
+3. Group redirect is checked second; if matched, modifies `req.URL.Path` (only reached if no key override)
 4. Body is returned unchanged (model is in URL, not body)
 
 ### OpenAI-Compatible Format (Gemini)
@@ -71,10 +71,10 @@ When a request comes with a Gemini channel but uses OpenAI format (`v1beta/opena
 proxy/server.go:
   SelectKey → ApplyModelRedirect(req, bodyBytes, group, apiKey)
                       ↓
-              Single json.Unmarshal
+              Single json.Unmarshal (OpenAI) or URL parse (Gemini native)
                       ↓
-              Key Override (if matches) → modifies body or URL path
-              Group Redirect (if no key override) → modifies body or URL path
+              OpenAI Format: Group redirect first → Key override second (overrides)
+              Gemini Native: Key override first → Group redirect second (if no override)
                       ↓
               Single json.Marshal (or body unchanged for Gemini URL path)
 ```
@@ -114,7 +114,7 @@ SelectKey → ApplyModelRedirect → [hack code] → ModifyRequest
 **Key decisions**:
 - Shared utility in `internal/utils/key_override.go` (avoids circular deps between `proxy` and `channel`)
 - Gemini native format modifies URL path (model not in body)
-- Key override takes precedence over group redirect (both checked in single unmarshal)
+- Key override takes precedence over group redirect (both checked; order differs by format but result is same)
 
 **Files changed**: 5 files - utils/key_override.go, channel/channel.go, channel/base_channel.go, channel/gemini_channel.go, proxy/server.go
 
